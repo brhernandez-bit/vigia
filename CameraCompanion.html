@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#020617">
+  <title>Vigía · Cámara auxiliar</title>
+  <style>
+    :root{color-scheme:dark;--bg:#020617;--panel:#0f172a;--line:#26364d;--muted:#94a3b8;--blue:#2563eb;--green:#059669}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:#e2e8f0;font:14px Inter,system-ui,sans-serif;padding:18px}
+    .wrap{max-width:900px;margin:auto}.head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}.head h1{font-size:17px;margin:0}.muted{color:var(--muted);font-size:12px}
+    .panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px}.stage{position:relative;background:#000;border-radius:12px;overflow:hidden;aspect-ratio:4/3;max-height:65vh}
+    video{width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}.guide{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none}.oval{width:min(55%,280px);height:76%;border:2px solid #38bdf8aa;border-radius:48%;box-shadow:0 0 0 999px #02061725}
+    .status{position:absolute;top:12px;left:12px;background:#020617cc;border:1px solid #475569;border-radius:8px;padding:7px 10px;font-size:11px;font-weight:800}
+    .controls{display:flex;gap:9px;flex-wrap:wrap;margin-top:14px}.btn{border:1px solid #334155;border-radius:10px;background:#1e293b;color:#fff;padding:11px 15px;font-weight:800;cursor:pointer}.primary{background:linear-gradient(90deg,#2563eb,#4f46e5);border:0}.success{background:#047857;border:0}.danger{background:#7f1d1d;border:0}
+    .settings{display:flex;gap:14px;flex-wrap:wrap;margin-top:12px}.settings label{font-size:11px;color:var(--muted)}input[type=range]{display:block;width:160px}.message{margin-top:12px;padding:12px;background:#0b172a;border:1px solid var(--line);border-radius:10px;color:var(--muted);font-size:12px}
+    @media(max-width:560px){body{padding:10px}.stage{aspect-ratio:3/4;max-height:65vh}.btn{flex:1}}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head"><div><h1>VIGÍA · CÁMARA AUXILIAR</h1><div class="muted" id="modeLabel">Captura para control de acceso</div></div><button class="btn danger" onclick="closeCamera()">CERRAR</button></div>
+  <section class="panel">
+    <div class="stage"><video id="video" autoplay muted playsinline></video><div class="guide"><div class="oval"></div></div><div class="status" id="status">INICIANDO CÁMARA…</div></div>
+    <div class="controls">
+      <button class="btn" onclick="switchCamera()">↻ CAMBIAR CÁMARA</button>
+      <button class="btn primary" onclick="captureNow()" id="captureBtn">◉ CAPTURAR</button>
+      <button class="btn success" onclick="toggleAuto()" id="autoBtn">ACTIVAR ESCANEO AUTOMÁTICO</button>
+    </div>
+    <div class="settings">
+      <label>Brillo <input id="brightness" type="range" min="-50" max="50" value="0" oninput="applyFilter()"></label>
+      <label>Contraste <input id="contrast" type="range" min="50" max="180" value="100" oninput="applyFilter()"></label>
+    </div>
+    <div class="message" id="message">La imagen se enviará a la ventana de Vigía que abrió esta cámara. Mantenga ambas ventanas abiertas.</div>
+  </section>
+</div>
+<canvas id="canvas" hidden></canvas>
+<script>
+const params=new URLSearchParams(location.search);
+const mode=params.get('mode')==='person'?'person':'scan';
+const nonce=params.get('nonce')||'';
+let stream=null,facing='user',auto=false,timer=null,busy=false;
+const $=id=>document.getElementById(id);
+$('modeLabel').textContent=mode==='person'?'Fotografía de referencia de personal':'Captura en vivo para verificación de acceso';
+$('captureBtn').textContent=mode==='person'?'◉ CAPTURAR FOTOGRAFÍA':'◉ CAPTURAR Y VERIFICAR';
+$('brightness').value=params.get('brightness')||0;$('contrast').value=params.get('contrast')||100;
+async function start(){try{stop();stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:facing},width:{ideal:1280},height:{ideal:720}},audio:false});$('video').srcObject=stream;applyFilter();$('status').textContent='CÁMARA ACTIVA';if(params.get('auto')==='1'&&mode==='scan')toggleAuto(true);}catch(e){$('status').textContent='ERROR DE CÁMARA';$('message').textContent='No se pudo activar la cámara: '+e.message+'. Compruebe permisos del navegador y que esta página esté publicada mediante HTTPS.';}}
+function stop(){if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}if(timer){clearInterval(timer);timer=null;}auto=false;}
+function applyFilter(){$('video').style.filter=`brightness(${1+(Number($('brightness').value)||0)/100}) contrast(${Number($('contrast').value)||100}%)`;}
+async function switchCamera(){facing=facing==='user'?'environment':'user';await start();}
+function captureNow(){if(busy)return;const v=$('video'),c=$('canvas');if(!v.videoWidth){$('message').textContent='Espere a que la cámara esté lista.';return;}busy=true;try{c.width=v.videoWidth;c.height=v.videoHeight;const ctx=c.getContext('2d');ctx.filter=$('video').style.filter||'none';if(facing==='user'){ctx.translate(c.width,0);ctx.scale(-1,1);}ctx.drawImage(v,0,0,c.width,c.height);const image=c.toDataURL('image/jpeg',.82);if(!window.opener){$('message').textContent='No se encontró la ventana de Vigía. Cierre esta ventana y ábrala desde la aplicación.';return;}window.opener.postMessage({type:'VIGIA_CAMERA_CAPTURE',mode:mode,image:image,nonce:nonce},'*');$('message').textContent=mode==='person'?'Fotografía enviada a Vigía. Puede cerrar esta ventana.':'Captura enviada a Vigía para verificación.';if(mode==='person'){setTimeout(()=>window.close(),700);}}catch(e){$('message').textContent='Error al capturar: '+e.message;}finally{busy=false;}}
+function toggleAuto(force){auto=typeof force==='boolean'?force:!auto;if(timer){clearInterval(timer);timer=null;}if(auto&&mode==='scan'){timer=setInterval(()=>{if(!document.hidden)captureNow();},6000);$('autoBtn').textContent='DETENER ESCANEO AUTOMÁTICO';$('status').textContent='ESCANEO AUTOMÁTICO ACTIVO';}else{$('autoBtn').textContent='ACTIVAR ESCANEO AUTOMÁTICO';$('status').textContent='CÁMARA ACTIVA';}}
+function closeCamera(){stop();window.close();}
+window.addEventListener('message',e=>{if(e.source!==window.opener)return;const m=e.data||{};if(m.nonce!==nonce)return;if(m.type==='VIGIA_CAPTURE_NOW')captureNow();if(m.type==='VIGIA_SWITCH_CAMERA')switchCamera();if(m.type==='VIGIA_AUTO_SCAN')toggleAuto(!!m.enabled);if(m.type==='VIGIA_CAMERA_SETTINGS'){if(m.brightness!==undefined)$('brightness').value=m.brightness;if(m.contrast!==undefined)$('contrast').value=m.contrast;applyFilter();}});
+window.addEventListener('beforeunload',stop);
+start();
+</script>
+</body>
+</html>
